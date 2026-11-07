@@ -1,0 +1,6 @@
+{
+  "name": "Lubumarket",
+  "description": "Marketplace multi-vendeurs en RDC — Achetez en ligne, recevez chez vous à Lubumbashi et partout en République démocratique du Congo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

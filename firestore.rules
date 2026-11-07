@@ -1,0 +1,1363 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // GLOBAL HARDENED PRIMITIVES
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isBootstrapAdminEmail() {
+      return isVerified() && request.auth.token.email == 'nkambajunior448@gmail.com';
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email == 'nkambajunior448@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isApprovedSeller(uid) {
+      return exists(/databases/$(database)/documents/sellers/$(uid)) &&
+        get(/databases/$(database)/documents/sellers/$(uid)).data.approvalStatus == 'approved';
+    }
+
+    function isApprovedSellerWithActiveShop(uid, shopId) {
+      return isApprovedSeller(uid) &&
+        get(/databases/$(database)/documents/sellers/$(uid)).data.shopId == shopId &&
+        exists(/databases/$(database)/documents/shops/$(shopId)) &&
+        get(/databases/$(database)/documents/shops/$(shopId)).data.sellerId == uid &&
+        get(/databases/$(database)/documents/shops/$(shopId)).data.status == 'active';
+    }
+
+    function isValidImageRef(u) {
+      return u is string && u.size() >= 1 && u.size() <= 90000 &&
+        (u.matches('^/.*') || u.matches('^https://.*') || u.matches('^data:image/[a-zA-Z0-9.+\\-]+;base64,[A-Za-z0-9+/=]+$'));
+    }
+
+    function isValidCurrency(c) {
+      return c is string && c.size() == 3 && (c == 'USD' || c == 'CDF');
+    }
+
+    function isNonNegNumber(n) {
+      return (n is int || n is float) && n >= 0 && n <= 100000000000;
+    }
+
+    // =========================================================================
+    // VALIDATION BLUEPRINTS (isValid[Entity])
+    // =========================================================================
+
+    function isValidAdmin(d) {
+      return d.keys().hasAll(['uid', 'email', 'createdAt']) &&
+        d.keys().hasOnly(['uid', 'email', 'createdAt']) &&
+        isValidId(d.uid) &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.createdAt is timestamp;
+    }
+
+    function isValidUser(d) {
+      return d.keys().hasAll(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'city', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'role', 'status', 'city', 'createdAt', 'updatedAt']) &&
+        isValidId(d.uid) &&
+        d.displayName is string && d.displayName.size() >= 1 && d.displayName.size() <= 120 &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.phone is string && d.phone.size() <= 32 &&
+        d.role is string && d.role.size() <= 20 && (d.role == 'customer' || d.role == 'seller' || d.role == 'courier' || d.role == 'admin') &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'active' || d.status == 'suspended') &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCustomer(d) {
+      return d.keys().hasAll(['uid', 'fullName', 'phone', 'email', 'city', 'favoriteProductIds', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['uid', 'fullName', 'phone', 'email', 'city', 'favoriteProductIds', 'createdAt', 'updatedAt']) &&
+        isValidId(d.uid) &&
+        d.fullName is string && d.fullName.size() >= 1 && d.fullName.size() <= 120 &&
+        d.phone is string && d.phone.size() <= 32 &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.favoriteProductIds is list && d.favoriteProductIds.size() <= 100 &&
+        (d.favoriteProductIds.size() == 0 || (d.favoriteProductIds[0] is string && d.favoriteProductIds[0].size() <= 128)) &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidSeller(d) {
+      return d.keys().hasAll(['uid', 'shopId', 'shopName', 'phone', 'email', 'address', 'activityZone', 'city', 'approvalStatus', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['uid', 'applicationId', 'shopId', 'shopName', 'phone', 'email', 'address', 'activityZone', 'city', 'approvalStatus', 'statusLabel', 'rejectionReason', 'createdAt', 'updatedAt']) &&
+        isValidId(d.uid) &&
+        (!('applicationId' in d) || isValidId(d.applicationId)) &&
+        isValidId(d.shopId) &&
+        d.shopName is string && d.shopName.size() >= 2 && d.shopName.size() <= 120 &&
+        d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 32 &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.address is string && d.address.size() >= 3 && d.address.size() <= 240 &&
+        d.activityZone is string && d.activityZone.size() >= 2 && d.activityZone.size() <= 100 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.approvalStatus is string && d.approvalStatus.size() <= 20 &&
+        (d.approvalStatus == 'pending' || d.approvalStatus == 'approved' || d.approvalStatus == 'suspended' || d.approvalStatus == 'rejected') &&
+        (!('statusLabel' in d) || (d.statusLabel is string && d.statusLabel.size() <= 60)) &&
+        (!('rejectionReason' in d) || (d.rejectionReason is string && d.rejectionReason.size() <= 400)) &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidSellerApplication(d) {
+      return d.keys().hasAll(['id', 'sellerId', 'shopId', 'shopName', 'logoUrl', 'logoStorageMode', 'description', 'phone', 'email', 'address', 'activityZone', 'city', 'status', 'statusLabel', 'rejectionReason', 'reviewedByUid', 'reviewedByEmail', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'sellerId', 'shopId', 'shopName', 'logoUrl', 'logoStorageMode', 'description', 'phone', 'email', 'address', 'activityZone', 'city', 'status', 'statusLabel', 'rejectionReason', 'reviewedByUid', 'reviewedByEmail', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.sellerId) &&
+        isValidId(d.shopId) &&
+        d.shopName is string && d.shopName.size() >= 2 && d.shopName.size() <= 120 &&
+        isValidImageRef(d.logoUrl) &&
+        d.logoStorageMode is string && d.logoStorageMode.size() <= 40 &&
+        (d.logoStorageMode == 'firebase_storage' || d.logoStorageMode == 'firestore_inline_fallback' || d.logoStorageMode == 'default_asset') &&
+        d.description is string && d.description.size() <= 1000 &&
+        d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 32 &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.address is string && d.address.size() >= 3 && d.address.size() <= 240 &&
+        d.activityZone is string && d.activityZone.size() >= 2 && d.activityZone.size() <= 100 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.status is string && d.status.size() <= 20 &&
+        (d.status == 'pending' || d.status == 'approved' || d.status == 'rejected' || d.status == 'suspended') &&
+        d.statusLabel is string && d.statusLabel.size() <= 60 &&
+        (d.statusLabel == 'En attente de validation' || d.statusLabel == 'Approuvée' || d.statusLabel == 'Refusée' || d.statusLabel == 'Suspendue') &&
+        d.rejectionReason is string && d.rejectionReason.size() <= 400 &&
+        d.reviewedByUid is string && d.reviewedByUid.size() <= 128 &&
+        d.reviewedByEmail is string && d.reviewedByEmail.size() <= 160 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCourier(d) {
+      return d.keys().hasAll(['uid', 'fullName', 'phone', 'email', 'deliveryZone', 'city', 'approvalStatus', 'isAvailable', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['uid', 'fullName', 'phone', 'email', 'deliveryZone', 'city', 'approvalStatus', 'isAvailable', 'createdAt', 'updatedAt']) &&
+        isValidId(d.uid) &&
+        d.fullName is string && d.fullName.size() >= 2 && d.fullName.size() <= 120 &&
+        d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 32 &&
+        d.email is string && d.email.size() >= 3 && d.email.size() <= 160 &&
+        d.deliveryZone is string && d.deliveryZone.size() >= 2 && d.deliveryZone.size() <= 100 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.approvalStatus is string && d.approvalStatus.size() <= 20 &&
+        (d.approvalStatus == 'pending' || d.approvalStatus == 'approved' || d.approvalStatus == 'suspended' || d.approvalStatus == 'rejected') &&
+        d.isAvailable is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidShop(d) {
+      return d.keys().hasAll(['id', 'sellerId', 'name', 'logoUrl', 'description', 'phone', 'address', 'activityZone', 'city', 'status', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'sellerId', 'name', 'logoUrl', 'description', 'phone', 'address', 'activityZone', 'city', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.sellerId) &&
+        d.name is string && d.name.size() >= 2 && d.name.size() <= 120 &&
+        isValidImageRef(d.logoUrl) &&
+        d.description is string && d.description.size() <= 1000 &&
+        d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 32 &&
+        d.address is string && d.address.size() >= 3 && d.address.size() <= 240 &&
+        d.activityZone is string && d.activityZone.size() >= 2 && d.activityZone.size() <= 100 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'pending' || d.status == 'active' || d.status == 'rejected' || d.status == 'suspended') &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCategory(d) {
+      return d.keys().hasAll(['id', 'name', 'slug', 'description', 'sortOrder', 'isActive', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'name', 'slug', 'description', 'sortOrder', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        d.name is string && d.name.size() >= 2 && d.name.size() <= 100 &&
+        d.slug is string && d.slug.size() >= 2 && d.slug.size() <= 100 &&
+        d.description is string && d.description.size() <= 300 &&
+        isNonNegNumber(d.sortOrder) &&
+        d.isActive is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidProduct(d) {
+      return d.keys().hasAll(['id', 'sellerId', 'shopId', 'shopName', 'categoryId', 'categoryName', 'title', 'description', 'price', 'currency', 'stock', 'imageUrls', 'city', 'soldCount', 'ratingAvg', 'ratingCount', 'status', 'lastOrderRef', 'lastReviewRef', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'sellerId', 'shopId', 'shopName', 'categoryId', 'categoryName', 'title', 'description', 'price', 'currency', 'stock', 'imageUrls', 'city', 'soldCount', 'ratingAvg', 'ratingCount', 'status', 'lastOrderRef', 'lastReviewRef', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.sellerId) &&
+        isValidId(d.shopId) &&
+        d.shopName is string && d.shopName.size() >= 2 && d.shopName.size() <= 120 &&
+        isValidId(d.categoryId) &&
+        d.categoryName is string && d.categoryName.size() >= 2 && d.categoryName.size() <= 100 &&
+        d.title is string && d.title.size() >= 2 && d.title.size() <= 160 &&
+        d.description is string && d.description.size() <= 2000 &&
+        (d.price is int || d.price is float) && d.price > 0 && d.price <= 10000000000 &&
+        isValidCurrency(d.currency) &&
+        d.stock is int && d.stock >= 0 && d.stock <= 1000000 &&
+        d.imageUrls is list && d.imageUrls.size() >= 1 && d.imageUrls.size() <= 6 &&
+        isValidImageRef(d.imageUrls[0]) &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.soldCount is int && d.soldCount >= 0 &&
+        isNonNegNumber(d.ratingAvg) && d.ratingAvg <= 5 &&
+        d.ratingCount is int && d.ratingCount >= 0 &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'active' || d.status == 'draft' || d.status == 'suspended') &&
+        d.lastOrderRef is string && d.lastOrderRef.size() <= 128 &&
+        d.lastReviewRef is string && d.lastReviewRef.size() <= 128 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidAddress(d) {
+      return d.keys().hasAll(['id', 'userId', 'label', 'recipientName', 'phone', 'city', 'commune', 'zoneId', 'zoneName', 'streetDetails', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'userId', 'label', 'recipientName', 'phone', 'city', 'commune', 'zoneId', 'zoneName', 'streetDetails', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.userId) &&
+        d.label is string && d.label.size() >= 1 && d.label.size() <= 80 &&
+        d.recipientName is string && d.recipientName.size() >= 2 && d.recipientName.size() <= 120 &&
+        d.phone is string && d.phone.size() >= 5 && d.phone.size() <= 32 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.commune is string && d.commune.size() >= 2 && d.commune.size() <= 80 &&
+        isValidId(d.zoneId) &&
+        d.zoneName is string && d.zoneName.size() >= 2 && d.zoneName.size() <= 100 &&
+        d.streetDetails is string && d.streetDetails.size() >= 3 && d.streetDetails.size() <= 240 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCart(d) {
+      return d.keys().hasAll(['userId', 'itemsJson', 'updatedAt']) &&
+        d.keys().hasOnly(['userId', 'itemsJson', 'updatedAt']) &&
+        isValidId(d.userId) &&
+        d.itemsJson is list && d.itemsJson.size() <= 40 &&
+        (d.itemsJson.size() == 0 || d.itemsJson[0] is map) &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidOrderStatus(s) {
+      return s is string && s.size() <= 30 && (
+        s == 'pending' || s == 'payment_pending' || s == 'paid' ||
+        s == 'accepted' || s == 'preparing' || s == 'ready_for_pickup' ||
+        s == 'in_delivery' || s == 'delivered' || s == 'cancelled' || s == 'refunded'
+      );
+    }
+
+    function isValidOrder(d) {
+      return d.keys().hasAll(['id', 'orderNumber', 'customerId', 'customerName', 'customerPhone', 'deliveryAddress', 'city', 'zoneId', 'zoneName', 'currency', 'exchangeRateAtOrder', 'merchandiseTotal', 'deliveryFee', 'grandTotal', 'paymentMethod', 'paymentMode', 'paymentStatus', 'status', 'subOrderCount', 'sellerIds', 'courierIds', 'customerConfirmedReceipt', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'orderNumber', 'customerId', 'customerName', 'customerPhone', 'deliveryAddress', 'city', 'zoneId', 'zoneName', 'currency', 'exchangeRateAtOrder', 'merchandiseTotal', 'deliveryFee', 'grandTotal', 'paymentMethod', 'paymentMode', 'paymentStatus', 'status', 'subOrderCount', 'sellerIds', 'courierIds', 'customerConfirmedReceipt', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        d.orderNumber is string && d.orderNumber.size() >= 4 && d.orderNumber.size() <= 40 &&
+        isValidId(d.customerId) &&
+        d.customerName is string && d.customerName.size() >= 1 && d.customerName.size() <= 120 &&
+        d.customerPhone is string && d.customerPhone.size() >= 5 && d.customerPhone.size() <= 32 &&
+        d.deliveryAddress is string && d.deliveryAddress.size() >= 4 && d.deliveryAddress.size() <= 300 &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        isValidId(d.zoneId) &&
+        d.zoneName is string && d.zoneName.size() >= 2 && d.zoneName.size() <= 100 &&
+        isValidCurrency(d.currency) &&
+        isNonNegNumber(d.exchangeRateAtOrder) && d.exchangeRateAtOrder > 0 &&
+        isNonNegNumber(d.merchandiseTotal) &&
+        isNonNegNumber(d.deliveryFee) &&
+        isNonNegNumber(d.grandTotal) &&
+        d.paymentMethod is string && d.paymentMethod.size() >= 2 && d.paymentMethod.size() <= 60 &&
+        d.paymentMode is string && d.paymentMode.size() <= 10 && (d.paymentMode == 'test' || d.paymentMode == 'cod') &&
+        d.paymentStatus is string && d.paymentStatus.size() <= 20 && (d.paymentStatus == 'pending' || d.paymentStatus == 'confirmed' || d.paymentStatus == 'failed' || d.paymentStatus == 'refunded') &&
+        isValidOrderStatus(d.status) &&
+        d.subOrderCount is int && d.subOrderCount >= 1 && d.subOrderCount <= 30 &&
+        d.sellerIds is list && d.sellerIds.size() >= 1 && d.sellerIds.size() <= 15 &&
+        d.sellerIds[0] is string && d.sellerIds[0].size() <= 128 &&
+        d.courierIds is list && d.courierIds.size() <= 15 &&
+        (d.courierIds.size() == 0 || (d.courierIds[0] is string && d.courierIds[0].size() <= 128)) &&
+        d.customerConfirmedReceipt is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidOrderItem(d) {
+      return d.keys().hasAll(['id', 'orderId', 'subOrderId', 'customerId', 'sellerId', 'shopId', 'productId', 'productTitle', 'productImageUrl', 'unitPrice', 'quantity', 'lineTotal', 'currency', 'createdAt']) &&
+        d.keys().hasOnly(['id', 'orderId', 'subOrderId', 'customerId', 'sellerId', 'shopId', 'productId', 'productTitle', 'productImageUrl', 'unitPrice', 'quantity', 'lineTotal', 'currency', 'createdAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.orderId) &&
+        isValidId(d.subOrderId) &&
+        isValidId(d.customerId) &&
+        isValidId(d.sellerId) &&
+        isValidId(d.shopId) &&
+        isValidId(d.productId) &&
+        d.productTitle is string && d.productTitle.size() >= 2 && d.productTitle.size() <= 160 &&
+        isValidImageRef(d.productImageUrl) &&
+        isNonNegNumber(d.unitPrice) &&
+        d.quantity is int && d.quantity >= 1 && d.quantity <= 10000 &&
+        isNonNegNumber(d.lineTotal) &&
+        isValidCurrency(d.currency) &&
+        d.createdAt is timestamp;
+    }
+
+    function isValidSellerSubOrder(d) {
+      return d.keys().hasAll(['id', 'orderId', 'orderNumber', 'customerId', 'customerName', 'sellerId', 'shopId', 'shopName', 'shopAddress', 'shopPhone', 'deliveryAddress', 'zoneName', 'city', 'itemsSummary', 'subtotal', 'deliveryFeeShare', 'currency', 'exchangeRateAtOrder', 'paymentMethod', 'paymentStatus', 'status', 'courierId', 'courierName', 'fundsReleased', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'orderId', 'orderNumber', 'customerId', 'customerName', 'sellerId', 'shopId', 'shopName', 'shopAddress', 'shopPhone', 'deliveryAddress', 'zoneName', 'city', 'itemsSummary', 'subtotal', 'deliveryFeeShare', 'currency', 'exchangeRateAtOrder', 'paymentMethod', 'paymentStatus', 'status', 'courierId', 'courierName', 'fundsReleased', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.orderId) &&
+        d.orderNumber is string && d.orderNumber.size() >= 4 && d.orderNumber.size() <= 40 &&
+        isValidId(d.customerId) &&
+        d.customerName is string && d.customerName.size() >= 1 && d.customerName.size() <= 120 &&
+        isValidId(d.sellerId) &&
+        isValidId(d.shopId) &&
+        d.shopName is string && d.shopName.size() >= 2 && d.shopName.size() <= 120 &&
+        d.shopAddress is string && d.shopAddress.size() <= 240 &&
+        d.shopPhone is string && d.shopPhone.size() <= 32 &&
+        d.deliveryAddress is string && d.deliveryAddress.size() <= 300 &&
+        d.zoneName is string && d.zoneName.size() <= 100 &&
+        d.city is string && d.city.size() <= 80 &&
+        d.itemsSummary is string && d.itemsSummary.size() <= 500 &&
+        isNonNegNumber(d.subtotal) &&
+        isNonNegNumber(d.deliveryFeeShare) &&
+        isValidCurrency(d.currency) &&
+        isNonNegNumber(d.exchangeRateAtOrder) &&
+        d.paymentMethod is string && d.paymentMethod.size() <= 60 &&
+        d.paymentStatus is string && d.paymentStatus.size() <= 20 &&
+        isValidOrderStatus(d.status) &&
+        d.courierId is string && d.courierId.size() <= 128 &&
+        d.courierName is string && d.courierName.size() <= 120 &&
+        d.fundsReleased is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidDelivery(d) {
+      return d.keys().hasAll(['id', 'orderId', 'subOrderId', 'orderNumber', 'customerId', 'customerName', 'customerPhone', 'deliveryAddress', 'sellerId', 'shopName', 'shopAddress', 'shopPhone', 'itemsSummary', 'courierId', 'courierName', 'zoneId', 'zoneName', 'city', 'deliveryFee', 'currency', 'isCod', 'codAmountToCollect', 'codCollected', 'codCollectedByUid', 'codCollectedByName', 'codReconciledByAdmin', 'codeHash', 'codeSalt', 'codeUsed', 'status', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'orderId', 'subOrderId', 'orderNumber', 'customerId', 'customerName', 'customerPhone', 'deliveryAddress', 'sellerId', 'shopName', 'shopAddress', 'shopPhone', 'itemsSummary', 'courierId', 'courierName', 'zoneId', 'zoneName', 'city', 'deliveryFee', 'currency', 'isCod', 'codAmountToCollect', 'codCollected', 'codCollectedByUid', 'codCollectedByName', 'codReconciledByAdmin', 'codeHash', 'codeSalt', 'codeUsed', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.orderId) &&
+        isValidId(d.subOrderId) &&
+        d.orderNumber is string && d.orderNumber.size() <= 40 &&
+        isValidId(d.customerId) &&
+        d.customerName is string && d.customerName.size() <= 120 &&
+        d.customerPhone is string && d.customerPhone.size() <= 32 &&
+        d.deliveryAddress is string && d.deliveryAddress.size() <= 300 &&
+        isValidId(d.sellerId) &&
+        d.shopName is string && d.shopName.size() <= 120 &&
+        d.shopAddress is string && d.shopAddress.size() <= 240 &&
+        d.shopPhone is string && d.shopPhone.size() <= 32 &&
+        d.itemsSummary is string && d.itemsSummary.size() <= 500 &&
+        d.courierId is string && d.courierId.size() <= 128 &&
+        d.courierName is string && d.courierName.size() <= 120 &&
+        isValidId(d.zoneId) &&
+        d.zoneName is string && d.zoneName.size() <= 100 &&
+        d.city is string && d.city.size() <= 80 &&
+        isNonNegNumber(d.deliveryFee) &&
+        isValidCurrency(d.currency) &&
+        d.isCod is bool &&
+        isNonNegNumber(d.codAmountToCollect) &&
+        d.codCollected is bool &&
+        d.codCollectedByUid is string && d.codCollectedByUid.size() <= 128 &&
+        d.codCollectedByName is string && d.codCollectedByName.size() <= 120 &&
+        d.codReconciledByAdmin is bool &&
+        d.codeHash is string && d.codeHash.size() == 64 &&
+        d.codeSalt is string && d.codeSalt.size() >= 8 && d.codeSalt.size() <= 64 &&
+        d.codeUsed is bool &&
+        d.status is string && d.status.size() <= 30 &&
+        (d.status == 'awaiting_assignment' || d.status == 'assigned' || d.status == 'picked_up' || d.status == 'delivered' || d.status == 'cancelled') &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCustomerDeliveryCode(d) {
+      return d.keys().hasAll(['deliveryId', 'orderId', 'subOrderId', 'customerId', 'code', 'used', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['deliveryId', 'orderId', 'subOrderId', 'customerId', 'code', 'used', 'createdAt', 'updatedAt']) &&
+        isValidId(d.deliveryId) &&
+        isValidId(d.orderId) &&
+        isValidId(d.subOrderId) &&
+        isValidId(d.customerId) &&
+        d.code is string && d.code.size() >= 6 && d.code.size() <= 8 &&
+        d.used is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidPayment(d) {
+      return d.keys().hasAll(['id', 'orderId', 'customerId', 'provider', 'mode', 'amount', 'currency', 'exchangeRateAtOrder', 'status', 'collectedByUid', 'collectedByName', 'reconciledByAdmin', 'idempotencyKey', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'orderId', 'customerId', 'provider', 'mode', 'amount', 'currency', 'exchangeRateAtOrder', 'status', 'collectedByUid', 'collectedByName', 'reconciledByAdmin', 'idempotencyKey', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.orderId) &&
+        isValidId(d.customerId) &&
+        d.provider is string && d.provider.size() >= 2 && d.provider.size() <= 60 &&
+        d.mode is string && d.mode.size() <= 10 && (d.mode == 'test' || d.mode == 'cod') &&
+        isNonNegNumber(d.amount) &&
+        isValidCurrency(d.currency) &&
+        isNonNegNumber(d.exchangeRateAtOrder) &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'pending' || d.status == 'confirmed' || d.status == 'failed' || d.status == 'refunded') &&
+        d.collectedByUid is string && d.collectedByUid.size() <= 128 &&
+        d.collectedByName is string && d.collectedByName.size() <= 120 &&
+        d.reconciledByAdmin is bool &&
+        isValidId(d.idempotencyKey) &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidWallet(d) {
+      return d.keys().hasAll(['sellerId', 'pendingBalanceUSD', 'availableBalanceUSD', 'lockedWithdrawalUSD', 'totalSalesUSD', 'totalWithdrawalsUSD', 'totalCommissionsUSD', 'pendingBalanceCDF', 'availableBalanceCDF', 'lockedWithdrawalCDF', 'totalSalesCDF', 'totalWithdrawalsCDF', 'totalCommissionsCDF', 'ledgerNotice', 'lastActionRef', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['sellerId', 'pendingBalanceUSD', 'availableBalanceUSD', 'lockedWithdrawalUSD', 'totalSalesUSD', 'totalWithdrawalsUSD', 'totalCommissionsUSD', 'pendingBalanceCDF', 'availableBalanceCDF', 'lockedWithdrawalCDF', 'totalSalesCDF', 'totalWithdrawalsCDF', 'totalCommissionsCDF', 'ledgerNotice', 'lastActionRef', 'createdAt', 'updatedAt']) &&
+        isValidId(d.sellerId) &&
+        isNonNegNumber(d.pendingBalanceUSD) &&
+        isNonNegNumber(d.availableBalanceUSD) &&
+        isNonNegNumber(d.lockedWithdrawalUSD) &&
+        isNonNegNumber(d.totalSalesUSD) &&
+        isNonNegNumber(d.totalWithdrawalsUSD) &&
+        isNonNegNumber(d.totalCommissionsUSD) &&
+        isNonNegNumber(d.pendingBalanceCDF) &&
+        isNonNegNumber(d.availableBalanceCDF) &&
+        isNonNegNumber(d.lockedWithdrawalCDF) &&
+        isNonNegNumber(d.totalSalesCDF) &&
+        isNonNegNumber(d.totalWithdrawalsCDF) &&
+        isNonNegNumber(d.totalCommissionsCDF) &&
+        d.ledgerNotice is string && d.ledgerNotice.size() <= 120 &&
+        d.lastActionRef is string && d.lastActionRef.size() <= 128 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidWalletTx(d) {
+      return d.keys().hasAll(['id', 'sellerId', 'type', 'amount', 'commissionAmount', 'netAmount', 'currency', 'referenceId', 'description', 'createdAt']) &&
+        d.keys().hasOnly(['id', 'sellerId', 'type', 'amount', 'commissionAmount', 'netAmount', 'currency', 'referenceId', 'description', 'createdAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.sellerId) &&
+        d.type is string && d.type.size() <= 30 &&
+        (d.type == 'sale_pending' || d.type == 'sale_available' || d.type == 'sale_cancelled' || d.type == 'withdrawal_hold' || d.type == 'withdrawal_approved' || d.type == 'withdrawal_rejected' || d.type == 'refund_debit') &&
+        isNonNegNumber(d.amount) &&
+        isNonNegNumber(d.commissionAmount) &&
+        isNonNegNumber(d.netAmount) &&
+        isValidCurrency(d.currency) &&
+        isValidId(d.referenceId) &&
+        d.description is string && d.description.size() <= 240 &&
+        d.createdAt is timestamp;
+    }
+
+    function isValidWithdrawal(d) {
+      return d.keys().hasAll(['id', 'sellerId', 'shopName', 'grossAmount', 'commissionRatePercent', 'commissionAmount', 'netAmount', 'currency', 'payoutChannel', 'payoutRecipient', 'status', 'adminNote', 'idempotencyKey', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'sellerId', 'shopName', 'grossAmount', 'commissionRatePercent', 'commissionAmount', 'netAmount', 'currency', 'payoutChannel', 'payoutRecipient', 'status', 'adminNote', 'idempotencyKey', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.sellerId) &&
+        d.shopName is string && d.shopName.size() <= 120 &&
+        (d.grossAmount is int || d.grossAmount is float) && d.grossAmount > 0 && d.grossAmount <= 10000000000 &&
+        d.commissionRatePercent == 5 &&
+        isNonNegNumber(d.commissionAmount) &&
+        isNonNegNumber(d.netAmount) &&
+        isValidCurrency(d.currency) &&
+        d.payoutChannel is string && d.payoutChannel.size() >= 2 && d.payoutChannel.size() <= 80 &&
+        d.payoutRecipient is string && d.payoutRecipient.size() >= 3 && d.payoutRecipient.size() <= 160 &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'pending' || d.status == 'approved' || d.status == 'rejected') &&
+        d.adminNote is string && d.adminNote.size() <= 300 &&
+        isValidId(d.idempotencyKey) &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidCommission(d) {
+      return d.keys().hasAll(['id', 'withdrawalId', 'sellerId', 'shopName', 'grossWithdrawalAmount', 'ratePercent', 'commissionAmount', 'netSellerAmount', 'currency', 'status', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'withdrawalId', 'sellerId', 'shopName', 'grossWithdrawalAmount', 'ratePercent', 'commissionAmount', 'netSellerAmount', 'currency', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.withdrawalId) &&
+        isValidId(d.sellerId) &&
+        d.shopName is string && d.shopName.size() <= 120 &&
+        isNonNegNumber(d.grossWithdrawalAmount) && d.grossWithdrawalAmount > 0 &&
+        d.ratePercent == 5 &&
+        isNonNegNumber(d.commissionAmount) &&
+        isNonNegNumber(d.netSellerAmount) &&
+        isValidCurrency(d.currency) &&
+        d.status is string && d.status.size() <= 25 && (d.status == 'pending_approval' || d.status == 'collected' || d.status == 'cancelled') &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidRefund(d) {
+      return d.keys().hasAll(['id', 'orderId', 'subOrderId', 'customerId', 'sellerId', 'amount', 'currency', 'reason', 'status', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'orderId', 'subOrderId', 'customerId', 'sellerId', 'amount', 'currency', 'reason', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.orderId) &&
+        isValidId(d.subOrderId) &&
+        isValidId(d.customerId) &&
+        isValidId(d.sellerId) &&
+        isNonNegNumber(d.amount) &&
+        isValidCurrency(d.currency) &&
+        d.reason is string && d.reason.size() <= 300 &&
+        d.status is string && d.status.size() <= 20 && (d.status == 'pending' || d.status == 'approved' || d.status == 'rejected') &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidReview(d) {
+      return d.keys().hasAll(['id', 'productId', 'orderId', 'subOrderId', 'customerId', 'customerName', 'rating', 'comment', 'createdAt']) &&
+        d.keys().hasOnly(['id', 'productId', 'orderId', 'subOrderId', 'customerId', 'customerName', 'rating', 'comment', 'createdAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.productId) &&
+        isValidId(d.orderId) &&
+        isValidId(d.subOrderId) &&
+        isValidId(d.customerId) &&
+        d.customerName is string && d.customerName.size() >= 1 && d.customerName.size() <= 120 &&
+        d.rating is int && d.rating >= 1 && d.rating <= 5 &&
+        d.comment is string && d.comment.size() >= 2 && d.comment.size() <= 600 &&
+        d.createdAt is timestamp;
+    }
+
+    function isValidNotification(d) {
+      return d.keys().hasAll(['id', 'recipientId', 'senderId', 'eventType', 'title', 'body', 'isRead', 'channels', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'recipientId', 'senderId', 'eventType', 'title', 'body', 'isRead', 'channels', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.recipientId) &&
+        isValidId(d.senderId) &&
+        d.eventType is string && d.eventType.size() <= 60 &&
+        d.title is string && d.title.size() <= 160 &&
+        d.body is string && d.body.size() <= 500 &&
+        d.isRead is bool &&
+        d.channels is list && d.channels.size() >= 1 && d.channels.size() <= 4 &&
+        d.channels[0] is string && d.channels[0].size() <= 20 &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidDeliveryZone(d) {
+      return d.keys().hasAll(['id', 'city', 'province', 'name', 'communesText', 'feeUSD', 'estimatedTime', 'isActive', 'createdAt', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'city', 'province', 'name', 'communesText', 'feeUSD', 'estimatedTime', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(d.id) &&
+        d.city is string && d.city.size() >= 2 && d.city.size() <= 80 &&
+        d.province is string && d.province.size() >= 2 && d.province.size() <= 80 &&
+        d.name is string && d.name.size() >= 2 && d.name.size() <= 100 &&
+        d.communesText is string && d.communesText.size() <= 240 &&
+        isNonNegNumber(d.feeUSD) &&
+        d.estimatedTime is string && d.estimatedTime.size() <= 80 &&
+        d.isActive is bool &&
+        d.createdAt is timestamp &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidExchangeRate(d) {
+      return d.keys().hasAll(['id', 'usdToCdf', 'updatedByUid', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'usdToCdf', 'updatedByUid', 'updatedAt']) &&
+        isValidId(d.id) &&
+        (d.usdToCdf is int || d.usdToCdf is float) && d.usdToCdf >= 100 && d.usdToCdf <= 100000 &&
+        isValidId(d.updatedByUid) &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidPaymentMethodConfig(d) {
+      return d.keys().hasAll(['id', 'code', 'label', 'category', 'isEnabled', 'isTestMode', 'integrationNote', 'updatedAt']) &&
+        d.keys().hasOnly(['id', 'code', 'label', 'category', 'isEnabled', 'isTestMode', 'integrationNote', 'updatedAt']) &&
+        isValidId(d.id) &&
+        d.code is string && d.code.size() >= 2 && d.code.size() <= 60 &&
+        d.label is string && d.label.size() >= 2 && d.label.size() <= 120 &&
+        d.category is string && d.category.size() <= 25 &&
+        (d.category == 'mobile_money' || d.category == 'card' || d.category == 'bank' || d.category == 'cod' || d.category == 'diaspora') &&
+        d.isEnabled is bool &&
+        d.isTestMode is bool &&
+        d.integrationNote is string && d.integrationNote.size() <= 300 &&
+        d.updatedAt is timestamp;
+    }
+
+    function isValidAdminLog(d) {
+      return d.keys().hasAll(['id', 'actorUid', 'actorEmail', 'action', 'targetType', 'targetId', 'details', 'createdAt']) &&
+        d.keys().hasOnly(['id', 'actorUid', 'actorEmail', 'action', 'targetType', 'targetId', 'details', 'createdAt']) &&
+        isValidId(d.id) &&
+        isValidId(d.actorUid) &&
+        d.actorEmail is string && d.actorEmail.size() <= 160 &&
+        d.action is string && d.action.size() <= 100 &&
+        d.targetType is string && d.targetType.size() <= 60 &&
+        isValidId(d.targetId) &&
+        d.details is string && d.details.size() <= 500 &&
+        d.createdAt is timestamp;
+    }
+
+    function isValidIdempotencyKey(d) {
+      return d.keys().hasAll(['key', 'uid', 'operation', 'resultId', 'createdAt']) &&
+        d.keys().hasOnly(['key', 'uid', 'operation', 'resultId', 'createdAt']) &&
+        isValidId(d.key) &&
+        isValidId(d.uid) &&
+        d.operation is string && d.operation.size() <= 80 &&
+        isValidId(d.resultId) &&
+        d.createdAt is timestamp;
+    }
+
+    // =========================================================================
+    // COLLECTION MATCH BLOCKS (ALL 28 COLLECTIONS)
+    // =========================================================================
+
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(adminId) && isOwner(adminId) && isBootstrapAdminEmail() &&
+        isValidAdmin(incoming()) && incoming().uid == adminId && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isVerified() && isOwner(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().status == 'active' &&
+        (incoming().role != 'admin' || isBootstrapAdminEmail()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isVerified() && isValidUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(userId) &&
+            existing().status == 'active' &&
+            incoming().status == existing().status &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'city', 'updatedAt'])) ||
+          (isOwner(userId) &&
+            existing().status == 'active' &&
+            existing().role == 'customer' &&
+            (incoming().role == 'seller' || incoming().role == 'courier') &&
+            incoming().status == existing().status &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['role', 'displayName', 'phone', 'city', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /customers/{customerId} {
+      allow get: if isValidId(customerId) && (isOwner(customerId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(customerId) && isVerified() && isOwner(customerId) &&
+        isValidCustomer(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(customerId) && isVerified() && isValidCustomer(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(customerId) && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'city', 'favoriteProductIds', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /sellers/{sellerId} {
+      allow get: if isValidId(sellerId) && (isOwner(sellerId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(sellerId) && isVerified() &&
+        isValidSeller(incoming()) &&
+        incoming().uid == sellerId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (isOwner(sellerId) && incoming().approvalStatus == 'pending'));
+      allow update: if isValidId(sellerId) && isVerified() && isValidSeller(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().shopId == existing().shopId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(sellerId) &&
+            incoming().approvalStatus == existing().approvalStatus &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['shopName', 'phone', 'address', 'activityZone', 'city', 'updatedAt'])) ||
+          (isOwner(sellerId) &&
+            existing().approvalStatus == 'rejected' &&
+            incoming().approvalStatus == 'pending' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['applicationId', 'shopName', 'phone', 'address', 'activityZone', 'city', 'approvalStatus', 'statusLabel', 'rejectionReason', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /sellerApplications/{applicationId} {
+      allow get: if isValidId(applicationId) && (isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(applicationId) && isVerified() &&
+        isValidSellerApplication(incoming()) &&
+        incoming().id == applicationId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (incoming().sellerId == request.auth.uid &&
+            incoming().status == 'pending' &&
+            incoming().statusLabel == 'En attente de validation' &&
+            incoming().reviewedByUid == '' &&
+            incoming().reviewedByEmail == '')
+        );
+      allow update: if isValidId(applicationId) && isAdmin() &&
+        isValidSellerApplication(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().shopId == existing().shopId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusLabel', 'rejectionReason', 'reviewedByUid', 'reviewedByEmail', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /couriers/{courierId} {
+      allow get: if isValidId(courierId) && (isOwner(courierId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(courierId) && isVerified() && isOwner(courierId) &&
+        isValidCourier(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().approvalStatus == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(courierId) && isVerified() && isValidCourier(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(courierId) &&
+            incoming().approvalStatus == existing().approvalStatus &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'deliveryZone', 'city', 'isAvailable', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /shops/{shopId} {
+      allow get: if isValidId(shopId) && (existing().status == 'active' || isOwner(existing().sellerId) || isAdmin());
+      allow list: if existing().status == 'active' || (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(shopId) && isVerified() &&
+        isValidShop(incoming()) &&
+        incoming().id == shopId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (incoming().sellerId == request.auth.uid && incoming().status == 'pending'));
+      allow update: if isValidId(shopId) && isVerified() && isValidShop(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(existing().sellerId) &&
+            incoming().status == existing().status &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'logoUrl', 'description', 'phone', 'address', 'activityZone', 'city', 'updatedAt'])) ||
+          (isOwner(existing().sellerId) &&
+            existing().status == 'rejected' &&
+            incoming().status == 'pending' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'logoUrl', 'description', 'phone', 'address', 'activityZone', 'city', 'status', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && (existing().isActive == true || isAdmin());
+      allow list: if existing().isActive == true || isAdmin();
+      allow create: if isValidId(categoryId) && isAdmin() &&
+        isValidCategory(incoming()) &&
+        incoming().id == categoryId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(categoryId) && isAdmin() &&
+        isValidCategory(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'slug', 'description', 'sortOrder', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (existing().status == 'active' || isOwner(existing().sellerId) || isAdmin());
+      allow list: if existing().status == 'active' || (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(productId) && isVerified() &&
+        isValidProduct(incoming()) &&
+        incoming().id == productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (incoming().sellerId == request.auth.uid &&
+            incoming().soldCount == 0 &&
+            incoming().ratingCount == 0 &&
+            isApprovedSellerWithActiveShop(request.auth.uid, incoming().shopId) &&
+            (exists(/databases/$(database)/documents/categories/$(incoming().categoryId)) || incoming().categoryId.matches('^cat-[a-z\\-]+$')))
+        );
+      allow update: if isValidId(productId) && isVerified() && isValidProduct(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().shopId == existing().shopId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action 1: Approved seller with active shop edits product catalog attributes
+          (isOwner(existing().sellerId) && isApprovedSellerWithActiveShop(request.auth.uid, existing().shopId) &&
+            incoming().soldCount == existing().soldCount &&
+            incoming().ratingAvg == existing().ratingAvg &&
+            incoming().ratingCount == existing().ratingCount &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['categoryId', 'categoryName', 'title', 'description', 'price', 'currency', 'stock', 'imageUrls', 'city', 'status', 'updatedAt'])) ||
+          // Action 2: Atomic stock decrement strictly bound to brand-new Order creation
+          (isValidId(incoming().lastOrderRef) &&
+            !exists(/databases/$(database)/documents/orders/$(incoming().lastOrderRef)) &&
+            existsAfter(/databases/$(database)/documents/orders/$(incoming().lastOrderRef)) &&
+            incoming().stock < existing().stock &&
+            incoming().soldCount == existing().soldCount + (existing().stock - incoming().stock) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'soldCount', 'lastOrderRef', 'updatedAt'])) ||
+          // Action 3: Atomic verified review rating aggregation
+          (isValidId(incoming().lastReviewRef) &&
+            !exists(/databases/$(database)/documents/reviews/$(incoming().lastReviewRef)) &&
+            existsAfter(/databases/$(database)/documents/reviews/$(incoming().lastReviewRef)) &&
+            incoming().ratingCount == existing().ratingCount + 1 &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['ratingAvg', 'ratingCount', 'lastReviewRef', 'updatedAt']))
+        );
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    match /addresses/{addressId} {
+      allow get: if isValidId(addressId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if (isSignedIn() && existing().userId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(addressId) && isVerified() &&
+        isValidAddress(incoming()) &&
+        incoming().id == addressId &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (exists(/databases/$(database)/documents/deliveryZones/$(incoming().zoneId)) || incoming().zoneId.matches('^zone-lushi-[a-z\\-]+$'));
+      allow update: if isValidId(addressId) && isVerified() && isValidAddress(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(existing().userId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['label', 'recipientName', 'phone', 'city', 'commune', 'zoneId', 'zoneName', 'streetDetails', 'updatedAt']))
+        );
+      allow delete: if isValidId(addressId) && (isOwner(existing().userId) || isAdmin());
+    }
+
+    match /carts/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) && isVerified() && isOwner(userId) &&
+        isValidCart(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isVerified() && isOwner(userId) &&
+        isValidCart(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['itemsJson', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+    }
+
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && (isOwner(existing().customerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().customerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(orderId) && isVerified() &&
+        isValidOrder(incoming()) &&
+        incoming().id == orderId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().customerConfirmedReceipt == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/payments/$(orderId));
+      allow update: if isValidId(orderId) && isVerified() && isValidOrder(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().customerId == existing().customerId &&
+        incoming().grandTotal == existing().grandTotal &&
+        incoming().currency == existing().currency &&
+        incoming().sellerIds == existing().sellerIds &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().status != 'cancelled' && existing().status != 'refunded' && (
+            // Action 1: Customer confirms receipt after courier delivered
+            (isOwner(existing().customerId) &&
+              existing().status == 'delivered' &&
+              incoming().customerConfirmedReceipt == true &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['customerConfirmedReceipt', 'updatedAt'])) ||
+            // Action 2: Customer cancels while still pending/payment_pending
+            (isOwner(existing().customerId) &&
+              (existing().status == 'pending' || existing().status == 'payment_pending') &&
+              incoming().status == 'cancelled' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+            // Action 3: Customer test-mode payment confirmation synced with Payment record
+            (isOwner(existing().customerId) &&
+              existing().paymentMode == 'test' &&
+              existing().paymentStatus == 'pending' &&
+              getAfter(/databases/$(database)/documents/payments/$(orderId)).data.status == incoming().paymentStatus &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])) ||
+            // Action 4: Participating seller or assigned courier updates workflow status ONLY
+            ((request.auth.uid in existing().sellerIds || request.auth.uid in existing().courierIds) &&
+              incoming().paymentStatus == existing().paymentStatus &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ))
+        );
+      allow delete: if false;
+    }
+
+    match /orderItems/{orderItemId} {
+      allow get: if isValidId(orderItemId) && (isOwner(existing().customerId) || isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && (existing().customerId == request.auth.uid || existing().sellerId == request.auth.uid)) || isAdmin();
+      allow create: if isValidId(orderItemId) && isVerified() &&
+        isValidOrderItem(incoming()) &&
+        incoming().id == orderItemId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        existsAfter(/databases/$(database)/documents/orders/$(incoming().orderId));
+      allow update, delete: if false;
+    }
+
+    match /sellerSubOrders/{subOrderId} {
+      allow get: if isValidId(subOrderId) && (
+        isOwner(existing().customerId) ||
+        isOwner(existing().sellerId) ||
+        isOwner(existing().courierId) ||
+        isAdmin()
+      );
+      allow list: if (isSignedIn() && (
+        existing().customerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid ||
+        existing().courierId == request.auth.uid
+      )) || isAdmin();
+      allow create: if isValidId(subOrderId) && isVerified() &&
+        isValidSellerSubOrder(incoming()) &&
+        incoming().id == subOrderId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().fundsReleased == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/orders/$(incoming().orderId));
+      allow update: if isValidId(subOrderId) && isVerified() && isValidSellerSubOrder(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().orderId == existing().orderId &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().customerId == existing().customerId &&
+        incoming().subtotal == existing().subtotal &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().status != 'cancelled' && existing().status != 'refunded' && (
+            // Action 1: Seller accepts, prepares, or marks ready_for_pickup
+            (isOwner(existing().sellerId) &&
+              incoming().fundsReleased == existing().fundsReleased &&
+              (incoming().status == 'accepted' || incoming().status == 'preparing' || incoming().status == 'ready_for_pickup') &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+            // Action 2: Seller settles fundsReleased once delivered AND paymentStatus == confirmed
+            (isOwner(existing().sellerId) &&
+              existing().status == 'delivered' &&
+              existing().paymentStatus == 'confirmed' &&
+              existing().fundsReleased == false &&
+              incoming().fundsReleased == true &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['fundsReleased', 'updatedAt'])) ||
+            // Action 3: Assigned courier updates transit or delivery handover
+            (isOwner(existing().courierId) &&
+              incoming().fundsReleased == existing().fundsReleased &&
+              (incoming().status == 'in_delivery' || incoming().status == 'delivered') &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+            // Action 4: Customer test-mode payment sync or pending cancellation
+            (isOwner(existing().customerId) &&
+              incoming().fundsReleased == false &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt']))
+          ))
+        );
+      allow delete: if false;
+    }
+
+    match /deliveries/{deliveryId} {
+      allow get: if isValidId(deliveryId) && (
+        isOwner(existing().courierId) ||
+        isOwner(existing().customerId) ||
+        isOwner(existing().sellerId) ||
+        isAdmin()
+      );
+      allow list: if (isSignedIn() && (
+        existing().courierId == request.auth.uid ||
+        existing().customerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid
+      )) || isAdmin();
+      allow create: if isValidId(deliveryId) && isVerified() &&
+        isValidDelivery(incoming()) &&
+        incoming().id == deliveryId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().codeUsed == false &&
+        incoming().codReconciledByAdmin == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/customerDeliveryCodes/$(deliveryId));
+      allow update: if isValidId(deliveryId) && isVerified() && isValidDelivery(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().orderId == existing().orderId &&
+        incoming().subOrderId == existing().subOrderId &&
+        incoming().codeHash == existing().codeHash &&
+        incoming().codeSalt == existing().codeSalt &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action 1: Assigned courier confirms package pickup at seller shop
+          (isOwner(existing().courierId) &&
+            existing().status == 'assigned' &&
+            incoming().status == 'picked_up' &&
+            incoming().codeUsed == false &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          // Action 2: Assigned courier confirms customer handover (one-time code verified by server)
+          (isOwner(existing().courierId) &&
+            existing().status == 'picked_up' &&
+            existing().codeUsed == false &&
+            incoming().status == 'delivered' &&
+            incoming().codeUsed == true &&
+            incoming().codReconciledByAdmin == false &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'codeUsed', 'codCollected', 'codCollectedByUid', 'codCollectedByName', 'updatedAt'])) ||
+          // Action 3: Customer cancels pending delivery before assignment/pickup
+          (isOwner(existing().customerId) &&
+            existing().status == 'awaiting_assignment' &&
+            incoming().status == 'cancelled' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /customerDeliveryCodes/{deliveryId} {
+      allow get: if isValidId(deliveryId) && (isOwner(existing().customerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().customerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(deliveryId) && isVerified() &&
+        isValidCustomerDeliveryCode(incoming()) &&
+        incoming().deliveryId == deliveryId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().used == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(deliveryId) && isVerified() && isValidCustomerDeliveryCode(incoming()) &&
+        incoming().deliveryId == existing().deliveryId &&
+        incoming().customerId == existing().customerId &&
+        incoming().code == existing().code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().used == false && incoming().used == true &&
+            getAfter(/databases/$(database)/documents/deliveries/$(deliveryId)).data.codeUsed == true &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['used', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (isOwner(existing().customerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().customerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(paymentId) && isVerified() &&
+        isValidPayment(incoming()) &&
+        incoming().id == paymentId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().reconciledByAdmin == false &&
+        (incoming().mode == 'test' || incoming().status == 'pending') &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(paymentId) && isVerified() && isValidPayment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().orderId == existing().orderId &&
+        incoming().customerId == existing().customerId &&
+        incoming().amount == existing().amount &&
+        incoming().currency == existing().currency &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action 1: Test-mode payment confirmation by server
+          (isOwner(existing().customerId) &&
+            existing().mode == 'test' &&
+            existing().status == 'pending' &&
+            (incoming().status == 'confirmed' || incoming().status == 'failed') &&
+            incoming().reconciledByAdmin == false &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /wallets/{sellerId} {
+      allow get: if isValidId(sellerId) && (isOwner(sellerId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(sellerId) && isVerified() &&
+        isValidWallet(incoming()) &&
+        incoming().sellerId == sellerId &&
+        incoming().pendingBalanceUSD == 0 &&
+        incoming().availableBalanceUSD == 0 &&
+        incoming().lockedWithdrawalUSD == 0 &&
+        incoming().totalSalesUSD == 0 &&
+        incoming().totalWithdrawalsUSD == 0 &&
+        incoming().totalCommissionsUSD == 0 &&
+        incoming().pendingBalanceCDF == 0 &&
+        incoming().availableBalanceCDF == 0 &&
+        incoming().lockedWithdrawalCDF == 0 &&
+        incoming().totalSalesCDF == 0 &&
+        incoming().totalCommissionsCDF == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isOwner(sellerId) || isAdmin());
+      allow update: if isValidId(sellerId) && isVerified() && isValidWallet(incoming()) &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action 1: Seller synchronizes non-withdrawable pendingBalance ONLY (available, locked, sales, commissions strictly unchanged)
+          (isOwner(sellerId) &&
+            incoming().availableBalanceUSD == existing().availableBalanceUSD &&
+            incoming().availableBalanceCDF == existing().availableBalanceCDF &&
+            incoming().lockedWithdrawalUSD == existing().lockedWithdrawalUSD &&
+            incoming().lockedWithdrawalCDF == existing().lockedWithdrawalCDF &&
+            incoming().totalSalesUSD == existing().totalSalesUSD &&
+            incoming().totalSalesCDF == existing().totalSalesCDF &&
+            incoming().totalWithdrawalsUSD == existing().totalWithdrawalsUSD &&
+            incoming().totalWithdrawalsCDF == existing().totalWithdrawalsCDF &&
+            incoming().totalCommissionsUSD == existing().totalCommissionsUSD &&
+            incoming().totalCommissionsCDF == existing().totalCommissionsCDF &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['pendingBalanceUSD', 'pendingBalanceCDF', 'lastActionRef', 'updatedAt'])) ||
+          // Action 2: Atomic release of delivered + confirmed subOrder into availableBalance
+          (isOwner(sellerId) &&
+            exists(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)) &&
+            get(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.sellerId == sellerId &&
+            get(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.fundsReleased == false &&
+            getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.fundsReleased == true &&
+            getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.status == 'delivered' &&
+            getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.paymentStatus == 'confirmed' &&
+            incoming().lockedWithdrawalUSD == existing().lockedWithdrawalUSD &&
+            incoming().lockedWithdrawalCDF == existing().lockedWithdrawalCDF &&
+            incoming().totalWithdrawalsUSD == existing().totalWithdrawalsUSD &&
+            incoming().totalCommissionsUSD == existing().totalCommissionsUSD &&
+            (
+              (getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.currency == 'USD' &&
+                math.abs(incoming().availableBalanceUSD - (existing().availableBalanceUSD + getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.subtotal)) < 0.001 &&
+                incoming().availableBalanceCDF == existing().availableBalanceCDF) ||
+              (getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.currency == 'CDF' &&
+                math.abs(incoming().availableBalanceCDF - (existing().availableBalanceCDF + getAfter(/databases/$(database)/documents/sellerSubOrders/$(incoming().lastActionRef)).data.subtotal)) < 0.001 &&
+                incoming().availableBalanceUSD == existing().availableBalanceUSD)
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['pendingBalanceUSD', 'availableBalanceUSD', 'totalSalesUSD', 'pendingBalanceCDF', 'availableBalanceCDF', 'totalSalesCDF', 'lastActionRef', 'updatedAt'])) ||
+          // Action 3: Seller withdrawal hold (strictly deducts from availableBalance into lockedWithdrawal alongside atomic Withdrawal + 5% Commission creation)
+          (isOwner(sellerId) &&
+            !exists(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)) &&
+            existsAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)) &&
+            existsAfter(/databases/$(database)/documents/commissions/$(incoming().lastActionRef)) &&
+            getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.sellerId == sellerId &&
+            getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.status == 'pending' &&
+            incoming().pendingBalanceUSD == existing().pendingBalanceUSD &&
+            incoming().pendingBalanceCDF == existing().pendingBalanceCDF &&
+            incoming().totalSalesUSD == existing().totalSalesUSD &&
+            incoming().totalSalesCDF == existing().totalSalesCDF &&
+            (
+              (incoming().availableBalanceUSD < existing().availableBalanceUSD &&
+                math.abs((incoming().availableBalanceUSD + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.grossAmount) - existing().availableBalanceUSD) < 0.001 &&
+                math.abs(incoming().lockedWithdrawalUSD - (existing().lockedWithdrawalUSD + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.grossAmount)) < 0.001 &&
+                incoming().availableBalanceCDF == existing().availableBalanceCDF &&
+                incoming().lockedWithdrawalCDF == existing().lockedWithdrawalCDF) ||
+              (incoming().availableBalanceCDF < existing().availableBalanceCDF &&
+                math.abs((incoming().availableBalanceCDF + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.grossAmount) - existing().availableBalanceCDF) < 0.001 &&
+                math.abs(incoming().lockedWithdrawalCDF - (existing().lockedWithdrawalCDF + getAfter(/databases/$(database)/documents/withdrawals/$(incoming().lastActionRef)).data.grossAmount)) < 0.001 &&
+                incoming().availableBalanceUSD == existing().availableBalanceUSD &&
+                incoming().lockedWithdrawalUSD == existing().lockedWithdrawalUSD)
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['availableBalanceUSD', 'lockedWithdrawalUSD', 'availableBalanceCDF', 'lockedWithdrawalCDF', 'lastActionRef', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /walletTransactions/{txId} {
+      allow get: if isValidId(txId) && (isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(txId) && isVerified() &&
+        isValidWalletTx(incoming()) &&
+        incoming().id == txId &&
+        incoming().createdAt == request.time &&
+        (isAdmin() || existsAfter(/databases/$(database)/documents/wallets/$(incoming().sellerId)));
+      allow update, delete: if false;
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow get: if isValidId(withdrawalId) && (isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(withdrawalId) && isVerified() &&
+        isOwner(incoming().sellerId) &&
+        isApprovedSeller(request.auth.uid) &&
+        isValidWithdrawal(incoming()) &&
+        incoming().id == withdrawalId &&
+        incoming().status == 'pending' &&
+        incoming().commissionRatePercent == 5 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/commissions/$(withdrawalId)) &&
+        getAfter(/databases/$(database)/documents/wallets/$(incoming().sellerId)).data.lastActionRef == withdrawalId;
+      allow update: if isValidId(withdrawalId) && isAdmin() &&
+        isValidWithdrawal(incoming()) &&
+        existing().status == 'pending' &&
+        incoming().id == existing().id &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().grossAmount == existing().grossAmount &&
+        incoming().commissionAmount == existing().commissionAmount &&
+        incoming().netAmount == existing().netAmount &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (incoming().status == 'approved' || incoming().status == 'rejected') &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminNote', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /commissions/{commissionId} {
+      allow get: if isValidId(commissionId) && (isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && existing().sellerId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(commissionId) && isVerified() &&
+        isOwner(incoming().sellerId) &&
+        isValidCommission(incoming()) &&
+        incoming().id == commissionId &&
+        incoming().withdrawalId == commissionId &&
+        incoming().ratePercent == 5 &&
+        incoming().status == 'pending_approval' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/withdrawals/$(commissionId));
+      allow update: if isValidId(commissionId) && isAdmin() &&
+        isValidCommission(incoming()) &&
+        existing().status == 'pending_approval' &&
+        incoming().id == existing().id &&
+        incoming().withdrawalId == existing().withdrawalId &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().commissionAmount == existing().commissionAmount &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (incoming().status == 'collected' || incoming().status == 'cancelled') &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /refunds/{refundId} {
+      allow get: if isValidId(refundId) && (isOwner(existing().customerId) || isOwner(existing().sellerId) || isAdmin());
+      allow list: if (isSignedIn() && (existing().customerId == request.auth.uid || existing().sellerId == request.auth.uid)) || isAdmin();
+      allow create: if isValidId(refundId) && isVerified() &&
+        isValidRefund(incoming()) &&
+        incoming().id == refundId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (isOwner(incoming().customerId) && incoming().status == 'pending'));
+      allow update: if isValidId(refundId) && isAdmin() &&
+        isValidRefund(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reason', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if existing().productId is string || isAdmin();
+      allow create: if isValidId(reviewId) && isVerified() &&
+        isValidReview(incoming()) &&
+        incoming().id == reviewId &&
+        incoming().customerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/orders/$(incoming().orderId)) &&
+        get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.customerId == request.auth.uid &&
+        get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.status == 'delivered' &&
+        get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.customerConfirmedReceipt == true;
+      allow update: if false;
+      allow delete: if isValidId(reviewId) && isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && (isOwner(existing().recipientId) || isAdmin());
+      allow list: if (isSignedIn() && existing().recipientId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(notificationId) && isVerified() &&
+        isValidNotification(incoming()) &&
+        incoming().id == notificationId &&
+        incoming().senderId == request.auth.uid &&
+        incoming().isRead == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(notificationId) && isVerified() && isValidNotification(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().recipientId == existing().recipientId &&
+        incoming().senderId == existing().senderId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(existing().recipientId) &&
+            incoming().isRead == true &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /deliveryZones/{zoneId} {
+      allow get: if isValidId(zoneId) && (existing().isActive == true || isAdmin());
+      allow list: if existing().isActive == true || isAdmin();
+      allow create: if isValidId(zoneId) && isAdmin() &&
+        isValidDeliveryZone(incoming()) &&
+        incoming().id == zoneId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(zoneId) && isAdmin() &&
+        isValidDeliveryZone(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['city', 'province', 'name', 'communesText', 'feeUSD', 'estimatedTime', 'isActive', 'updatedAt']);
+      allow delete: if isValidId(zoneId) && isAdmin();
+    }
+
+    match /exchangeRates/{rateId} {
+      allow get: if isValidId(rateId);
+      allow list: if existing().usdToCdf >= 100;
+      allow create: if isValidId(rateId) && isAdmin() &&
+        isValidExchangeRate(incoming()) &&
+        incoming().id == rateId &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(rateId) && isAdmin() &&
+        isValidExchangeRate(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['usdToCdf', 'updatedByUid', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /paymentConfigs/{configId} {
+      allow get: if isValidId(configId);
+      allow list: if existing().isEnabled == true || isAdmin();
+      allow create: if isValidId(configId) && isAdmin() &&
+        isValidPaymentMethodConfig(incoming()) &&
+        incoming().id == configId &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(configId) && isAdmin() &&
+        isValidPaymentMethodConfig(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().code == existing().code &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'isEnabled', 'isTestMode', 'integrationNote', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /adminLogs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(logId) && isVerified() &&
+        isValidAdminLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /idempotencyKeys/{keyId} {
+      allow get: if isValidId(keyId) && (isOwner(existing().uid) || isAdmin());
+      allow list: if false;
+      allow create: if isValidId(keyId) && isVerified() &&
+        isValidIdempotencyKey(incoming()) &&
+        incoming().key == keyId &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
