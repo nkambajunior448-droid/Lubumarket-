@@ -1,0 +1,582 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Core Helper Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdminEmail() {
+      return isSignedIn() &&
+             'email' in request.auth.token &&
+             request.auth.token.email == 'nkambajunior448@gmail.com' &&
+             'email_verified' in request.auth.token &&
+             request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isAdminEmail() ||
+             (isSignedIn() &&
+              exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+              get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isActive == true);
+    }
+
+    function isNotBlocked() {
+      return isSignedIn() &&
+             (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+              !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus in ['BLOCKED', 'SUSPENDED', 'REJECTED']));
+    }
+
+    function isApprovedVendor() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'VENDEUR' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'APPROVED';
+    }
+
+    function isApprovedDriver() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'LIVREUR' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'APPROVED';
+    }
+
+    // --- Validation Helpers ---
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 30 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+             data.role in ['CLIENT', 'VENDEUR', 'LIVREUR'] &&
+             data.accountStatus in ['APPROVED', 'PENDING', 'SUSPENDED', 'REJECTED', 'BLOCKED'] &&
+             data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 80 &&
+             data.quartier is string && data.quartier.size() >= 2 && data.quartier.size() <= 80 &&
+             (!('storeName' in data) || data.storeName == null || (data.storeName is string && data.storeName.size() <= 100)) &&
+             (!('vehicleType' in data) || data.vehicleType == null || (data.vehicleType is string && data.vehicleType.size() <= 80)) &&
+             (!('deliveryZone' in data) || data.deliveryZone == null || (data.deliveryZone is string && data.deliveryZone.size() <= 120)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAddress(data) {
+      return data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 30 &&
+             data.deliveryType in ['DOMICILE', 'BUREAU', 'AUTRE'] &&
+             data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 80 &&
+             data.quartier is string && data.quartier.size() >= 2 && data.quartier.size() <= 80 &&
+             data.avenue is string && data.avenue.size() >= 2 && data.avenue.size() <= 120 &&
+             data.referenceLandmark is string && data.referenceLandmark.size() >= 2 && data.referenceLandmark.size() <= 200 &&
+             data.isDefault is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+             data.description is string && data.description.size() >= 2 && data.description.size() <= 1000 &&
+             data.priceUsd is number && data.priceUsd > 0 && data.priceUsd <= 100000 &&
+             data.category is string && data.category.size() >= 2 && data.category.size() <= 50 &&
+             data.sellerId is string && data.sellerId.size() >= 1 && data.sellerId.size() <= 128 &&
+             data.sellerName is string && data.sellerName.size() >= 2 && data.sellerName.size() <= 100 &&
+             data.sellerCommune is string && data.sellerCommune.size() >= 2 && data.sellerCommune.size() <= 80 &&
+             data.stock is int && data.stock >= 0 && data.stock <= 100000 &&
+             (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5)) &&
+             (!('reviewCount' in data) || (data.reviewCount is int && data.reviewCount >= 0)) &&
+             (!('isPopular' in data) || data.isPopular is bool) &&
+             (!('isBestOffer' in data) || data.isBestOffer is bool) &&
+             (!('discountPercent' in data) || (data.discountPercent is int && data.discountPercent >= 0 && data.discountPercent <= 95)) &&
+             (!('isNew' in data) || data.isNew is bool) &&
+             (!('imageUrls' in data) || (data.imageUrls is list && data.imageUrls.size() <= 5)) &&
+             (!('moderationStatus' in data) || data.moderationStatus in ['PENDING', 'APPROVED', 'REJECTED', 'BLOCKED']) &&
+             (!('moderationReason' in data) || data.moderationReason == null || (data.moderationReason is string && data.moderationReason.size() <= 300)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCategory(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
+             data.iconName is string && data.iconName.size() >= 1 && data.iconName.size() <= 40 &&
+             data.isActive is bool &&
+             data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 1000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPromotion(data) {
+      return data.title is string && data.title.size() >= 2 && data.title.size() <= 100 &&
+             data.subtitle is string && data.subtitle.size() >= 2 && data.subtitle.size() <= 250 &&
+             data.badgeText is string && data.badgeText.size() >= 1 && data.badgeText.size() <= 40 &&
+             data.isActive is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAppSettings(data) {
+      return data.cdfExchangeRate is number && data.cdfExchangeRate > 0 && data.cdfExchangeRate <= 50000 &&
+             data.commissionPercent is number && data.commissionPercent >= 0 && data.commissionPercent <= 50 &&
+             data.communeFees is map && data.communeFees.size() >= 1 && data.communeFees.size() <= 20 &&
+             data.supportPhone is string && data.supportPhone.size() >= 6 && data.supportPhone.size() <= 30 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidOrder(data) {
+      return data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() >= 6 && data.customerPhone.size() <= 30 &&
+             data.sellerIds is list && data.sellerIds.size() >= 1 && data.sellerIds.size() <= 20 &&
+             data.sellerIds[0] is string &&
+             data.deliveryAddress is map &&
+             data.items is list && data.items.size() >= 1 && data.items.size() <= 50 &&
+             data.deliveryFeeUsd is number && data.deliveryFeeUsd >= 0 && data.deliveryFeeUsd <= 500 &&
+             data.subtotalUsd is number && data.subtotalUsd > 0 && data.subtotalUsd <= 1000000 &&
+             data.totalUsd is number && data.totalUsd > 0 && data.totalUsd <= 1000500 &&
+             data.commissionUsd is number && data.commissionUsd >= 0 && data.commissionUsd <= 100000 &&
+             data.paymentMethod is string && data.paymentMethod in ['MPESA', 'AIRTEL_MONEY', 'ORANGE_MONEY', 'VIREMENT_BANCAIRE', 'CASH_LIVRAISON'] &&
+             data.status in ['RECU', 'CONFIRME', 'EN_PREPARATION', 'EN_ATTENTE_LIVREUR', 'EN_COURS_LIVRAISON', 'LIVREE', 'ANNULEE'] &&
+             (!('assignedDriverId' in data) || data.assignedDriverId == null || (data.assignedDriverId is string && data.assignedDriverId.size() <= 128)) &&
+             (!('assignedDriverName' in data) || data.assignedDriverName == null || (data.assignedDriverName is string && data.assignedDriverName.size() <= 100)) &&
+             (!('assignedDriverPhone' in data) || data.assignedDriverPhone == null || (data.assignedDriverPhone is string && data.assignedDriverPhone.size() <= 30)) &&
+             (!('vendorNotes' in data) || data.vendorNotes == null || (data.vendorNotes is string && data.vendorNotes.size() <= 300)) &&
+             (!('paymentConfirmed' in data) || data.paymentConfirmed is bool) &&
+             (!('paymentReference' in data) || data.paymentReference == null || (data.paymentReference is string && data.paymentReference.size() <= 120)) &&
+             (!('commissionCredited' in data) || data.commissionCredited is bool) &&
+             (!('driverPayoutSettled' in data) || data.driverPayoutSettled is bool) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidDeliveryJob(data) {
+      return data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128 &&
+             data.commune is string && data.commune.size() >= 2 && data.commune.size() <= 80 &&
+             data.quartier is string && data.quartier.size() >= 2 && data.quartier.size() <= 80 &&
+             data.deliveryFeeUsd is number && data.deliveryFeeUsd >= 0 && data.deliveryFeeUsd <= 500 &&
+             data.status in ['EN_ATTENTE_LIVREUR', 'EN_COURS_LIVRAISON', 'LIVREE', 'ANNULEE'] &&
+             (!('assignedDriverId' in data) || data.assignedDriverId == null || (data.assignedDriverId is string && data.assignedDriverId.size() <= 128)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidVendorWithdrawal(data) {
+      return data.vendorId is string && data.vendorId.size() >= 1 && data.vendorId.size() <= 128 &&
+             data.vendorName is string && data.vendorName.size() >= 2 && data.vendorName.size() <= 100 &&
+             data.amountGrossUsd is number && data.amountGrossUsd > 0 && data.amountGrossUsd <= 500000 &&
+             data.commissionPercent is number && data.commissionPercent >= 0 && data.commissionPercent <= 25 &&
+             data.commissionUsd is number && data.commissionUsd >= 0 &&
+             data.amountNetUsd is number && data.amountNetUsd > 0 &&
+             data.paymentMethod in ['MPESA', 'AIRTEL_MONEY', 'ORANGE_MONEY', 'VIREMENT_BANCAIRE'] &&
+             data.accountDetails is string && data.accountDetails.size() >= 4 && data.accountDetails.size() <= 120 &&
+             data.status in ['EN_ATTENTE', 'APPROUVE', 'PAYE', 'REFUSE'] &&
+             (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 300)) &&
+             data.verifiedByAdmin is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidOwnerWalletConfig(data) {
+      return data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.preferredMethod in ['MPESA', 'AIRTEL_MONEY', 'ORANGE_MONEY', 'VIREMENT_BANCAIRE'] &&
+             data.accountDetails is string && data.accountDetails.size() >= 4 && data.accountDetails.size() <= 120 &&
+             data.accountHolderName is string && data.accountHolderName.size() >= 2 && data.accountHolderName.size() <= 100 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidOwnerWithdrawal(data) {
+      return data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 &&
+             data.amountUsd is number && data.amountUsd > 0 && data.amountUsd <= 1000000 &&
+             data.paymentMethod in ['MPESA', 'AIRTEL_MONEY', 'ORANGE_MONEY', 'VIREMENT_BANCAIRE'] &&
+             data.accountDetails is string && data.accountDetails.size() >= 4 && data.accountDetails.size() <= 120 &&
+             data.status in ['EN_ATTENTE', 'APPROUVE', 'PAYE', 'REFUSE'] &&
+             (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 300)) &&
+             data.verifiedConfirmed is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidOrderDispute(data) {
+      return data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128 &&
+             data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 100 &&
+             data.reason is string && data.reason.size() >= 4 && data.reason.size() <= 500 &&
+             data.status in ['OPEN', 'IN_REVIEW', 'RESOLVED', 'REJECTED'] &&
+             (!('adminNotes' in data) || data.adminNotes == null || (data.adminNotes is string && data.adminNotes.size() <= 400)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAdminAuditLog(data) {
+      return data.adminId is string && data.adminId.size() >= 1 && data.adminId.size() <= 128 &&
+             data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 120 &&
+             data.action is string && data.action.size() >= 2 && data.action.size() <= 80 &&
+             data.targetType is string && data.targetType.size() >= 2 && data.targetType.size() <= 60 &&
+             data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
+             data.details is string && data.details.size() >= 1 && data.details.size() <= 500 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // --- Collection Rules ---
+
+    function isValidAdminProfile(data) {
+      return data.adminId is string && data.adminId.size() >= 1 && data.adminId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+             data.role == 'SUPER_ADMIN' &&
+             data.isActive is bool &&
+             (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30)) &&
+             (!('authMethod' in data) || data.authMethod in ['GMAIL', 'PHONE_SMS', 'GMAIL_AND_SMS']) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 1. Owner-bootstrapped Super Admins (ordinary users & spoofed emails strictly denied)
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdminEmail() &&
+                       isValidId(adminId) &&
+                       incoming().adminId == adminId &&
+                       isValidAdminProfile(incoming());
+      allow update: if isAdminEmail() &&
+                       isValidId(adminId) &&
+                       incoming().adminId == existing().adminId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidAdminProfile(incoming());
+      allow delete: if false;
+    }
+
+    // 2. Users (Role & Status protected; never allow self-escalation to ADMIN or APPROVED vendor/driver)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'fullName', 'phone', 'email', 'role', 'accountStatus', 'commune', 'quartier', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'fullName', 'phone', 'email', 'role', 'accountStatus', 'commune', 'quartier', 'storeName', 'vehicleType', 'deliveryZone', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming()) &&
+                       (
+                         (incoming().role == 'CLIENT' && incoming().accountStatus == 'APPROVED') ||
+                         (incoming().role in ['VENDEUR', 'LIVREUR'] && incoming().accountStatus == 'PENDING')
+                       );
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           request.auth.uid == userId &&
+                           existing().accountStatus == 'APPROVED' &&
+                           incoming().role == existing().role &&
+                           incoming().accountStatus == existing().accountStatus &&
+                           incoming().email == existing().email &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'commune', 'quartier', 'storeName', 'vehicleType', 'deliveryZone', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isAdmin() && isValidId(userId);
+
+      // User-scoped saved delivery addresses
+      match /addresses/{addressId} {
+        allow get, list: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+        allow create: if isSignedIn() &&
+                         isValidId(addressId) &&
+                         isNotBlocked() &&
+                         (request.auth.uid == userId || isAdmin()) &&
+                         incoming().keys().hasAll(['fullName', 'phone', 'deliveryType', 'commune', 'quartier', 'avenue', 'referenceLandmark', 'isDefault', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['fullName', 'phone', 'deliveryType', 'commune', 'quartier', 'avenue', 'referenceLandmark', 'isDefault', 'createdAt', 'updatedAt']) &&
+                         isValidAddress(incoming());
+        allow update: if isSignedIn() &&
+                         isValidId(addressId) &&
+                         isNotBlocked() &&
+                         (request.auth.uid == userId || isAdmin()) &&
+                         isValidAddress(incoming()) &&
+                         incoming().createdAt == existing().createdAt;
+        allow delete: if isSignedIn() && isValidId(addressId) && (request.auth.uid == userId || isAdmin());
+      }
+    }
+
+    // 3. Products (With Moderation Gate)
+    match /products/{productId} {
+      allow get: if isSignedIn() && isValidId(productId) && (
+        isAdmin() ||
+        existing().sellerId == request.auth.uid ||
+        !('moderationStatus' in existing()) ||
+        existing().moderationStatus == 'APPROVED'
+      );
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(productId) &&
+                       incoming().keys().hasAll(['name', 'description', 'priceUsd', 'category', 'sellerId', 'sellerName', 'sellerCommune', 'stock', 'createdAt', 'updatedAt']) &&
+                       isValidProduct(incoming()) &&
+                       (
+                         isAdmin() ||
+                         (
+                           isApprovedVendor() &&
+                           incoming().sellerId == request.auth.uid &&
+                           incoming().moderationStatus == 'PENDING' &&
+                           (!('moderationReason' in incoming()) || incoming().moderationReason == null)
+                         )
+                       );
+
+      allow update: if isSignedIn() &&
+                       isValidId(productId) &&
+                       isValidProduct(incoming()) &&
+                       incoming().sellerId == existing().sellerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           isApprovedVendor() &&
+                           existing().sellerId == request.auth.uid &&
+                           (!('moderationStatus' in existing()) || existing().moderationStatus != 'BLOCKED') &&
+                           incoming().moderationStatus == 'PENDING' &&
+                           (!('moderationReason' in incoming()) || incoming().moderationReason == existing().moderationReason)
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(productId) && (
+        isAdmin() ||
+        (isApprovedVendor() && existing().sellerId == request.auth.uid && (!('moderationStatus' in existing()) || existing().moderationStatus != 'BLOCKED'))
+      );
+    }
+
+    // 4. Categories (Admin managed)
+    match /categories/{categoryId} {
+      allow get: if isSignedIn() && isValidId(categoryId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming());
+      allow update: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    // 5. Promotions & Banners (Admin managed)
+    match /promotions/{promoId} {
+      allow get: if isSignedIn() && isValidId(promoId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(promoId) && isValidPromotion(incoming());
+      allow update: if isAdmin() && isValidId(promoId) && isValidPromotion(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(promoId);
+    }
+
+    // 6. App Settings (Delivery fees & currency settings - Admin managed)
+    match /app_settings/{settingId} {
+      allow get: if isSignedIn() && isValidId(settingId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(settingId) && isValidAppSettings(incoming());
+      allow update: if isAdmin() && isValidId(settingId) && isValidAppSettings(incoming()) && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
+
+    // 7. Orders (PII protected: Customer, involved Vendors, Assigned Driver, or Admin)
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (
+        isAdmin() ||
+        existing().customerId == request.auth.uid ||
+        (request.auth.uid in existing().sellerIds) ||
+        existing().assignedDriverId == request.auth.uid ||
+        (existing().status == 'EN_ATTENTE_LIVREUR' && isApprovedDriver())
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        existing().customerId == request.auth.uid ||
+        (request.auth.uid in existing().sellerIds) ||
+        existing().assignedDriverId == request.auth.uid
+      );
+      allow create: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       isNotBlocked() &&
+                       isValidOrder(incoming()) &&
+                       incoming().customerId == request.auth.uid &&
+                       incoming().status == 'RECU' &&
+                       (!('paymentConfirmed' in incoming()) || incoming().paymentConfirmed == false) &&
+                       (!('commissionCredited' in incoming()) || incoming().commissionCredited == false) &&
+                       (!('driverPayoutSettled' in incoming()) || incoming().driverPayoutSettled == false) &&
+                       (!('paymentReference' in incoming()) || incoming().paymentReference == null) &&
+                       (!('assignedDriverId' in incoming()) || incoming().assignedDriverId == null);
+      allow update: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       isValidOrder(incoming()) &&
+                       incoming().customerId == existing().customerId &&
+                       incoming().sellerIds == existing().sellerIds &&
+                       incoming().totalUsd == existing().totalUsd &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           isNotBlocked() &&
+                           !(existing().status in ['LIVREE', 'ANNULEE']) &&
+                           (
+                             // Vendor advancing preparation status
+                             (
+                               isApprovedVendor() &&
+                               (request.auth.uid in existing().sellerIds) &&
+                               incoming().status in ['CONFIRME', 'EN_PREPARATION', 'EN_ATTENTE_LIVREUR'] &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                             ) ||
+                             // Approved driver claiming order
+                             (
+                               isApprovedDriver() &&
+                               existing().status == 'EN_ATTENTE_LIVREUR' &&
+                               (!('assignedDriverId' in existing()) || existing().assignedDriverId == null) &&
+                               incoming().assignedDriverId == request.auth.uid &&
+                               incoming().status == 'EN_COURS_LIVRAISON' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['assignedDriverId', 'assignedDriverName', 'assignedDriverPhone', 'status', 'updatedAt'])
+                             ) ||
+                             // Assigned driver marking delivered
+                             (
+                               isApprovedDriver() &&
+                               existing().assignedDriverId == request.auth.uid &&
+                               existing().status == 'EN_COURS_LIVRAISON' &&
+                               incoming().status == 'LIVREE' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                             ) ||
+                             // Customer cancelling newly received order
+                             (
+                               existing().customerId == request.auth.uid &&
+                               existing().status == 'RECU' &&
+                               incoming().status == 'ANNULEE' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                             )
+                           )
+                         )
+                       );
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    // 8. Delivery Jobs (Non-PII dispatch board for approved drivers)
+    match /delivery_jobs/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (isAdmin() || isApprovedDriver());
+      allow list: if isSignedIn() && (isAdmin() || existing().status == 'EN_ATTENTE_LIVREUR' || existing().assignedDriverId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       isValidDeliveryJob(incoming()) &&
+                       (isAdmin() || isApprovedVendor());
+      allow update: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       isValidDeliveryJob(incoming()) &&
+                       incoming().orderId == existing().orderId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           isApprovedDriver() &&
+                           existing().status == 'EN_ATTENTE_LIVREUR' &&
+                           incoming().assignedDriverId == request.auth.uid &&
+                           incoming().status == 'EN_COURS_LIVRAISON' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['assignedDriverId', 'status', 'updatedAt'])
+                         ) ||
+                         (
+                           isApprovedDriver() &&
+                           existing().assignedDriverId == request.auth.uid &&
+                           existing().status == 'EN_COURS_LIVRAISON' &&
+                           incoming().status == 'LIVREE' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    // 9. Vendor Withdrawals (Strictly isolated from Owner Wallet; immutable history)
+    match /vendor_withdrawals/{withdrawalId} {
+      allow get: if isSignedIn() && isValidId(withdrawalId) && (isAdmin() || existing().vendorId == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || existing().vendorId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       isValidId(withdrawalId) &&
+                       isApprovedVendor() &&
+                       incoming().vendorId == request.auth.uid &&
+                       incoming().status == 'EN_ATTENTE' &&
+                       incoming().verifiedByAdmin == false &&
+                       isValidVendorWithdrawal(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(withdrawalId) &&
+                       isAdmin() &&
+                       existing().status in ['EN_ATTENTE', 'APPROUVE'] &&
+                       isValidVendorWithdrawal(incoming()) &&
+                       incoming().vendorId == existing().vendorId &&
+                       incoming().amountGrossUsd == existing().amountGrossUsd &&
+                       incoming().commissionPercent == existing().commissionPercent &&
+                       incoming().commissionUsd == existing().commissionUsd &&
+                       incoming().amountNetUsd == existing().amountNetUsd &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    // 10. Owner Private Wallet & Owner Withdrawals (Strictly Admin/Owner only)
+    match /owner_wallet/{docId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(docId) && isValidOwnerWalletConfig(incoming());
+      allow delete: if false;
+    }
+
+    match /owner_withdrawals/{withdrawalId} {
+      allow get: if isAdmin() && isValidId(withdrawalId);
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+                       isValidId(withdrawalId) &&
+                       isValidOwnerWithdrawal(incoming()) &&
+                       incoming().status == 'EN_ATTENTE';
+      allow update: if isAdmin() &&
+                       isValidId(withdrawalId) &&
+                       existing().status in ['EN_ATTENTE', 'APPROUVE'] &&
+                       isValidOwnerWithdrawal(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().amountUsd == existing().amountUsd &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    // 11. Order Disputes / Claims (Customer opens for own order; Admin reviews & resolves)
+    match /order_disputes/{disputeId} {
+      allow get: if isSignedIn() && isValidId(disputeId) && (isAdmin() || existing().customerId == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || existing().customerId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       isValidId(disputeId) &&
+                       isNotBlocked() &&
+                       incoming().customerId == request.auth.uid &&
+                       incoming().status == 'OPEN' &&
+                       (!('adminNotes' in incoming()) || incoming().adminNotes == null) &&
+                       isValidOrderDispute(incoming());
+      allow update: if isAdmin() &&
+                       isValidId(disputeId) &&
+                       isValidOrderDispute(incoming()) &&
+                       incoming().customerId == existing().customerId &&
+                       incoming().orderId == existing().orderId &&
+                       incoming().createdAt == existing().createdAt;
+      allow delete: if false;
+    }
+
+    // 12. Admin Audit Logs (Append-only by Admin; completely private to Admin)
+    match /admin_audit_logs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isAdmin() &&
+                       isValidId(logId) &&
+                       incoming().adminId == request.auth.uid &&
+                       isValidAdminAuditLog(incoming());
+      allow update, delete: if false;
+    }
+  }
+}

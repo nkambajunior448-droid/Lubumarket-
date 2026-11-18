@@ -1,0 +1,20 @@
+{
+  "name": "lubumarket-email-auth-backend",
+  "version": "1.0.0",
+  "description": "Serveur d'authentification Email/Mot de passe sécurisé (Express, SQLite, bcrypt, JWT httpOnly, Nodemailer/Resend) pour Lubumarket",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/auth.test.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.10.0"
+  }
+}

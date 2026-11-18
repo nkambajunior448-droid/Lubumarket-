@@ -1,0 +1,315 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated Lubumarket user profile with server-protected role and account approval/moderation status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID" },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["CLIENT", "VENDEUR", "LIVREUR"] },
+        "accountStatus": { "type": "string", "enum": ["APPROVED", "PENDING", "SUSPENDED", "REJECTED", "BLOCKED"] },
+        "commune": { "type": "string" },
+        "quartier": { "type": "string" },
+        "storeName": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "deliveryZone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "fullName", "phone", "email", "role", "accountStatus", "commune", "quartier", "createdAt", "updatedAt"]
+    },
+    "DeliveryAddress": {
+      "title": "DeliveryAddress",
+      "description": "User saved Lubumbashi delivery address.",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "deliveryType": { "type": "string", "enum": ["DOMICILE", "BUREAU", "AUTRE"] },
+        "commune": { "type": "string" },
+        "quartier": { "type": "string" },
+        "avenue": { "type": "string" },
+        "referenceLandmark": { "type": "string" },
+        "isDefault": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fullName", "phone", "deliveryType", "commune", "quartier", "avenue", "referenceLandmark", "isDefault", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Marketplace product with multi-photo gallery and admin moderation status.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "priceUsd": { "type": "number" },
+        "category": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "sellerCommune": { "type": "string" },
+        "stock": { "type": "integer" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "integer" },
+        "isPopular": { "type": "boolean" },
+        "isBestOffer": { "type": "boolean" },
+        "discountPercent": { "type": "integer" },
+        "isNew": { "type": "boolean" },
+        "imageUrls": { "type": "array" },
+        "moderationStatus": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "BLOCKED"] },
+        "moderationReason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "priceUsd", "category", "sellerId", "sellerName", "sellerCommune", "stock", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Marketplace product category managed by admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "iconName": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "displayOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "iconName", "isActive", "displayOrder", "createdAt", "updatedAt"]
+    },
+    "PromotionBanner": {
+      "title": "PromotionBanner",
+      "description": "Promotional banner displayed on the marketplace home screen.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "badgeText": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subtitle", "badgeText", "isActive", "createdAt", "updatedAt"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global marketplace configuration including delivery fees per commune and exchange rate.",
+      "type": "object",
+      "properties": {
+        "cdfExchangeRate": { "type": "number" },
+        "commissionPercent": { "type": "number" },
+        "communeFees": { "type": "object" },
+        "supportPhone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cdfExchangeRate", "commissionPercent", "communeFees", "supportPhone", "createdAt", "updatedAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order with Lubumbashi home delivery, payment confirmation, commission lock, and 7-stage status.",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "sellerIds": { "type": "array" },
+        "assignedDriverId": { "type": "string" },
+        "assignedDriverName": { "type": "string" },
+        "assignedDriverPhone": { "type": "string" },
+        "deliveryAddress": { "type": "object" },
+        "items": { "type": "array" },
+        "deliveryFeeUsd": { "type": "number" },
+        "subtotalUsd": { "type": "number" },
+        "totalUsd": { "type": "number" },
+        "commissionUsd": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string", "enum": ["RECU", "CONFIRME", "EN_PREPARATION", "EN_ATTENTE_LIVREUR", "EN_COURS_LIVRAISON", "LIVREE", "ANNULEE"] },
+        "vendorNotes": { "type": "string" },
+        "paymentConfirmed": { "type": "boolean" },
+        "paymentReference": { "type": "string" },
+        "commissionCredited": { "type": "boolean" },
+        "driverPayoutSettled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "customerName", "customerPhone", "sellerIds", "deliveryAddress", "items", "deliveryFeeUsd", "subtotalUsd", "totalUsd", "commissionUsd", "paymentMethod", "status", "createdAt", "updatedAt"]
+    },
+    "DeliveryJob": {
+      "title": "DeliveryJob",
+      "description": "Non-PII delivery dispatch ticket for approved drivers to claim orders.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "commune": { "type": "string" },
+        "quartier": { "type": "string" },
+        "deliveryFeeUsd": { "type": "number" },
+        "status": { "type": "string", "enum": ["EN_ATTENTE_LIVREUR", "EN_COURS_LIVRAISON", "LIVREE", "ANNULEE"] },
+        "assignedDriverId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "commune", "quartier", "deliveryFeeUsd", "status", "createdAt", "updatedAt"]
+    },
+    "VendorWithdrawal": {
+      "title": "VendorWithdrawal",
+      "description": "Vendor withdrawal request with 5% Lubumarket commission deduction.",
+      "type": "object",
+      "properties": {
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "amountGrossUsd": { "type": "number" },
+        "commissionPercent": { "type": "number" },
+        "commissionUsd": { "type": "number" },
+        "amountNetUsd": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["MPESA", "AIRTEL_MONEY", "ORANGE_MONEY", "VIREMENT_BANCAIRE"] },
+        "accountDetails": { "type": "string" },
+        "status": { "type": "string", "enum": ["EN_ATTENTE", "APPROUVE", "PAYE", "REFUSE"] },
+        "rejectionReason": { "type": "string" },
+        "verifiedByAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vendorId", "vendorName", "amountGrossUsd", "commissionPercent", "commissionUsd", "amountNetUsd", "paymentMethod", "accountDetails", "status", "verifiedByAdmin", "createdAt", "updatedAt"]
+    },
+    "OwnerWalletConfig": {
+      "title": "OwnerWalletConfig",
+      "description": "Private payout coordinates and wallet settings for the Lubumarket owner.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "preferredMethod": { "type": "string", "enum": ["MPESA", "AIRTEL_MONEY", "ORANGE_MONEY", "VIREMENT_BANCAIRE"] },
+        "accountDetails": { "type": "string" },
+        "accountHolderName": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "preferredMethod", "accountDetails", "accountHolderName", "updatedAt"]
+    },
+    "OwnerWithdrawal": {
+      "title": "OwnerWithdrawal",
+      "description": "Private withdrawal request for the owner's 5% platform commissions.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "amountUsd": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["MPESA", "AIRTEL_MONEY", "ORANGE_MONEY", "VIREMENT_BANCAIRE"] },
+        "accountDetails": { "type": "string" },
+        "status": { "type": "string", "enum": ["EN_ATTENTE", "APPROUVE", "PAYE", "REFUSE"] },
+        "rejectionReason": { "type": "string" },
+        "verifiedConfirmed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "amountUsd", "paymentMethod", "accountDetails", "status", "verifiedConfirmed", "createdAt", "updatedAt"]
+    },
+    "OrderDispute": {
+      "title": "OrderDispute",
+      "description": "Customer dispute or claim on an order, reviewed and resolved by principal admin.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "IN_REVIEW", "RESOLVED", "REJECTED"] },
+        "adminNotes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "customerId", "customerName", "reason", "status", "createdAt", "updatedAt"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Immutable append-only log of principal admin actions.",
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string" },
+        "adminEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminId", "adminEmail", "action", "targetType", "targetId", "details", "createdAt"]
+    },
+    "SuperAdminProfile": {
+      "title": "SuperAdminProfile",
+      "description": "Owner-bootstrapped Super Administrator profile for LUBUMARKET.",
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["SUPER_ADMIN"] },
+        "authMethod": { "type": "string", "enum": ["GMAIL", "PHONE_SMS", "GMAIL_AND_SMS"] },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminId", "fullName", "email", "role", "isActive", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/SuperAdminProfile" },
+      "description": "Owner-bootstrapped Super Administrator accounts."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Registered Lubumarket users (Client, Vendeur, Livreur)."
+    },
+    "/users/{userId}/addresses/{addressId}": {
+      "schema": { "$ref": "#/entities/DeliveryAddress" },
+      "description": "User saved Lubumbashi delivery addresses."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Marketplace product catalog."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Product categories managed by admin."
+    },
+    "/promotions/{promoId}": {
+      "schema": { "$ref": "#/entities/PromotionBanner" },
+      "description": "Promotional banners managed by admin."
+    },
+    "/app_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Platform delivery fees and configuration."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders and delivery statuses."
+    },
+    "/delivery_jobs/{orderId}": {
+      "schema": { "$ref": "#/entities/DeliveryJob" },
+      "description": "Non-PII delivery dispatch jobs for drivers."
+    },
+    "/vendor_withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/VendorWithdrawal" },
+      "description": "Vendor withdrawal requests isolated from owner funds."
+    },
+    "/owner_wallet/{docId}": {
+      "schema": { "$ref": "#/entities/OwnerWalletConfig" },
+      "description": "Owner private payout coordinates."
+    },
+    "/owner_withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/OwnerWithdrawal" },
+      "description": "Owner commission withdrawal history."
+    },
+    "/order_disputes/{disputeId}": {
+      "schema": { "$ref": "#/entities/OrderDispute" },
+      "description": "Customer order disputes managed by principal admin."
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminAuditLog" },
+      "description": "Append-only principal admin audit logs."
+    }
+  }
+}
